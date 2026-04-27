@@ -8,11 +8,19 @@ pub enum Command {
     Switch { model: String },
     SwitchEmbed { model: String },
     Index { path: PathBuf },
+    IncrementalIndex { path: PathBuf },
     Reindex,
     Save,
+    Export { path: Option<PathBuf> },
+    Import { path: PathBuf },
     Clear,
+    ClearHistory,
+    Benchmark,
+    Profiles,
+    Profile { name: String },
     Help,
     Quit,
+    SyntaxToggle,
 }
 
 pub fn parse(input: &str) -> Option<Command> {
@@ -44,9 +52,31 @@ pub fn parse(input: &str) -> Option<Command> {
                 .unwrap_or_else(|| PathBuf::from("."));
             Some(Command::Index { path })
         }
+        "incremental-index" | "smart-index" => {
+            let path = parts.get(1)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
+            Some(Command::IncrementalIndex { path })
+        }
         "reindex" => Some(Command::Reindex),
         "save" => Some(Command::Save),
+        "export" => {
+            let path = parts.get(1).map(PathBuf::from);
+            Some(Command::Export { path })
+        }
+        "import" => {
+            parts.get(1)
+                .map(|p| Command::Import { path: PathBuf::from(p) })
+        }
         "clear" => Some(Command::Clear),
+        "clear-history" => Some(Command::ClearHistory),
+        "benchmark" | "bench" => Some(Command::Benchmark),
+        "profiles" => Some(Command::Profiles),
+        "profile" => {
+            parts.get(1)
+                .map(|n| Command::Profile { name: n.to_string() })
+        }
+        "syntax" | "highlight" => Some(Command::SyntaxToggle),
         "help" | "h" | "?" => Some(Command::Help),
         "quit" | "q" | "exit" => Some(Command::Quit),
         _ => None,
@@ -54,16 +84,24 @@ pub fn parse(input: &str) -> Option<Command> {
 }
 
 pub fn help_text() -> &'static str {
-    "/models          - List models
-    /switch <model>  - Change chat model
+    "/models              - List models
+    /switch <model>      - Change chat model
     /switch-embed <model> - Change embed model
-    /index [path]     - Index directory
-    /reindex          - Reindex current project
-    /save             - Save index
-    /clear            - Clear chat
-    /help             - Show help
-    /quit             - Exit
+    /index <path>        - Index directory (full)
+    /incremental-index <path> - Smart reindex (only changed files)
+    /reindex             - Reindex current project
+    /save                - Save index
+    /export [file]       - Export last retrieved context
+    /import <file>       - Load questions from file
+    /clear               - Clear chat
+    /clear-history       - Clear conversation context
+    /benchmark           - Show timing metrics
+    /profiles            - List config profiles
+    /profile <name>      - Switch profile
+    /syntax              - Toggle syntax highlighting
+    /help                - Show help
+    /quit                - Exit
 
-    @file or @dir/    - Include files
-    Tab               - Complete @path"
+    @file or @dir/       - Include files in question
+    Tab                  - Complete @path"
 }

@@ -2,12 +2,6 @@
 
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub enum Mode {
-    #[default]
-    Insert,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MessageSource {
     User,
@@ -44,6 +38,27 @@ pub struct IndexingProgress {
 }
 
 #[derive(Debug, Clone)]
+pub enum IndexingStatus {
+    Idle,
+    InProgress {
+        current: usize,
+        total: usize,
+        file: String,
+    },
+    Complete {
+        files: usize,
+        chunks: usize,
+    },
+    Error(String),
+}
+
+impl Default for IndexingStatus {
+    fn default() -> Self {
+        IndexingStatus::Idle
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct FileReference {
     pub path: PathBuf,
     pub content: Option<String>,
@@ -60,17 +75,17 @@ pub struct MouseSelection {
 #[derive(Debug, Clone)]
 pub struct App {
     pub running: bool,
-    pub mode: Mode,
     pub input: String,
     pub cursor_pos: usize,
     pub messages: Vec<Message>,
     pub context_chunks: Vec<crate::db::store::CodeChunk>,
-    pub chat_scroll: u16,
-    pub context_scroll: u16,
+    pub chat_scroll: usize,
+    pub context_scroll: usize,
     pub is_loading: bool,
     pub streaming_message: Option<String>,
     pub status: String,
     pub indexing_progress: Option<IndexingProgress>,
+    pub indexing_status: IndexingStatus,
     pub current_model: String,
     pub current_embed_model: String,
     pub available_models: Vec<String>,
@@ -82,13 +97,22 @@ pub struct App {
     pub mouse_selection: Option<MouseSelection>,
     pub mouse_dragging: bool,
     pub thinking_dots: usize,
+    pub follow_bottom: bool,
+    pub max_scroll: usize,
+    pub benchmark_mode: bool,
+    pub last_timing: Option<crate::service::TimingMetrics>,
+    pub last_retrieved_context: Vec<crate::db::store::CodeChunk>,
+    pub syntax_highlight: bool,
+    pub theme: String,
+    pub debug_mode: bool,
+    pub available_profiles: Vec<String>,
+    pub current_profile: Option<String>,
 }
 
 impl App {
     pub fn new() -> Self {
         Self {
             running: true,
-            mode: Mode::default(),
             input: String::new(),
             cursor_pos: 0,
             messages: Vec::new(),
@@ -99,6 +123,7 @@ impl App {
             streaming_message: None,
             status: String::new(),
             indexing_progress: None,
+            indexing_status: IndexingStatus::Idle,
             current_model: "llama3".to_string(),
             current_embed_model: "nomic-embed-text".to_string(),
             available_models: Vec::new(),
@@ -110,11 +135,41 @@ impl App {
             mouse_selection: None,
             mouse_dragging: false,
             thinking_dots: 0,
+            follow_bottom: true,
+            max_scroll: 0,
+            benchmark_mode: false,
+            last_timing: None,
+            last_retrieved_context: Vec::new(),
+            syntax_highlight: true,
+            theme: "base16-eighties.dark".to_string(),
+            debug_mode: false,
+            available_profiles: Vec::new(),
+            current_profile: None,
         }
     }
 
     pub fn with_status(mut self, status: String) -> Self {
         self.status = status;
+        self
+    }
+
+    pub fn with_syntax_highlight(mut self, enabled: bool) -> Self {
+        self.syntax_highlight = enabled;
+        self
+    }
+
+    pub fn with_theme(mut self, theme: String) -> Self {
+        self.theme = theme;
+        self
+    }
+
+    pub fn with_benchmark(mut self, enabled: bool) -> Self {
+        self.benchmark_mode = enabled;
+        self
+    }
+
+    pub fn with_debug(mut self, enabled: bool) -> Self {
+        self.debug_mode = enabled;
         self
     }
 

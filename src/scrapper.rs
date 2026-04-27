@@ -1,33 +1,94 @@
 // src/scrapper.rs
 
-const IGNORE: [&str; 5] = ["models", "node_modules", "target", "dist", ".git"];
-const FILTERS: [&str; 5] = [".rs", ".toml", ".json", ".yaml", ".md"];
-
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const DEFAULT_IGNORE: [&str; 5] = ["models", "node_modules", "target", "dist", ".git"];
+
+const DEFAULT_FILTERS: &[&str] = &[
+    ".rs", ".toml", ".json", ".yaml", ".yml", ".md",
+    ".py", ".pyi",
+    ".js", ".ts", ".jsx", ".tsx", ".mjs",
+    ".go",
+    ".java", ".kt", ".scala",
+    ".c", ".cpp", ".h", ".hpp",
+    ".sh", ".bash", ".zsh",
+    ".txt", ".sql",
+];
+
+pub struct ScrapperConfig {
+    pub ignore_dirs: Vec<String>,
+    pub extensions: Vec<String>,
+}
+
+impl Default for ScrapperConfig {
+    fn default() -> Self {
+        Self {
+            ignore_dirs: DEFAULT_IGNORE.iter().map(|s| s.to_string()).collect(),
+            extensions: DEFAULT_FILTERS.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl ScrapperConfig {
+    pub fn new(ignore_dirs: Vec<String>, extensions: Vec<String>) -> Self {
+        Self { ignore_dirs, extensions }
+    }
+}
+
 pub fn scrapper(path: &Path) -> Vec<(PathBuf, String)> {
+    scrapper_with_config(path, &ScrapperConfig::default())
+}
+
+pub fn scrapper_with_config(path: &Path, config: &ScrapperConfig) -> Vec<(PathBuf, String)> {
     let mut files: Vec<(PathBuf, String)> = Vec::new();
 
     if path.is_dir() {
-        for entry in fs::read_dir(path).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
 
-            if IGNORE.iter().any(|&ignore| path.to_str().unwrap().contains(ignore)) {
-                continue;
-            }
-            if path.is_dir() {
-                files.extend(scrapper(&path));
-            } else if FILTERS.iter().any(|&filter| path.to_str().unwrap().ends_with(filter)) {
-                files.push((path.clone(), fs::read_to_string(&path).unwrap_or_else(|_| String::new())));
+                let path_str = entry_path.to_string_lossy();
+
+                if config.ignore_dirs.iter().any(|ignore| {
+                    path_str.contains(ignore) ||
+                    entry_path.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n == ignore)
+                        .unwrap_or(false)
+                }) {
+                    continue;
+                }
+
+                if entry_path.is_dir() {
+                    files.extend(scrapper_with_config(&entry_path, config));
+                } else if config.extensions.iter().any(|ext| {
+                    entry_path.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| format!(".{}", e) == *ext || entry_path.to_string_lossy().ends_with(ext))
+                        .unwrap_or(false) ||
+                    entry_path.to_string_lossy().ends_with(ext)
+                }) {
+                    if let Ok(content) = fs::read_to_string(&entry_path) {
+                        files.push((entry_path.clone(), content));
+                    }
+                }
             }
         }
+    } else if path.is_file() {
+        if let Ok(content) = fs::read_to_string(path) {
+            files.push((path.to_path_buf(), content));
+        }
     }
+
     files
 }
 
 pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
     let lines: Vec<&str> = text.lines().collect();
     let mut chunks = Vec::new();
     let mut i = 0;
@@ -41,7 +102,7 @@ pub fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> 
         if end == lines.len() {
             break;
         }
-        i += chunk_size - overlap;
+        i += chunk_size.saturating_sub(overlap);
     }
 
     chunks

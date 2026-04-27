@@ -14,8 +14,19 @@ pub fn handle(key: event::KeyEvent, input: &str, show_suggestions: bool) -> Opti
         }
     }
 
+    if input.is_empty() {
+        match key.code {
+            KeyCode::Up => return Some(Action::ScrollChatUp),
+            KeyCode::Down => return Some(Action::ScrollChatDown),
+            _ => {}
+        }
+    }
+
     match key.code {
-        KeyCode::Esc => Some(Action::Quit),
+        KeyCode::Esc => Some(Action::Cancel),
+        KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(Action::Quit),
         KeyCode::Enter => {
             if input.trim().starts_with('/') {
                 Some(Action::ExecuteCommand)
@@ -46,7 +57,6 @@ pub fn handle(key: event::KeyEvent, input: &str, show_suggestions: bool) -> Opti
                     'e' => None,
                     'b' => Some(Action::CursorLeft),
                     'f' => Some(Action::CursorRight),
-                    'c' => Some(Action::Quit),
                     'p' => Some(Action::ScrollChatUp),
                     'n' => Some(Action::ScrollChatDown),
                     _ => None,

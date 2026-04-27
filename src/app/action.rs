@@ -5,6 +5,7 @@ use crate::app::state::App;
 #[derive(Debug, Clone)]
 pub enum Action {
     Quit,
+    Cancel,
     InsertChar(char),
     DeleteChar,
     Backspace,
@@ -28,6 +29,10 @@ pub fn reduce(app: &mut App, action: Action) {
     match action {
         Action::Quit => {
             app.running = false;
+        }
+        Action::Cancel => {
+            app.is_loading = false;
+            app.streaming_message = None;
         }
         Action::InsertChar(c) => {
             app.insert_char(c);
@@ -62,12 +67,14 @@ pub fn reduce(app: &mut App, action: Action) {
             }
         }
         Action::ScrollChatUp => {
-            if app.chat_scroll > 0 {
-                app.chat_scroll -= 1;
+            if app.chat_scroll > 3 {
+                app.chat_scroll -= 3;
+            } else {
+                app.chat_scroll = 0;
             }
         }
         Action::ScrollChatDown => {
-            app.chat_scroll += 1;
+            app.chat_scroll = app.chat_scroll.saturating_add(3);
         }
         Action::ScrollContextUp => {
             if app.context_scroll > 0 {
@@ -97,21 +104,39 @@ pub fn reduce(app: &mut App, action: Action) {
         }
         Action::ApplyCompletion => {
             if app.show_suggestions && !app.suggestions.is_empty() {
-                if let Some(suggestion) = app.suggestions.get(app.suggestion_index) {
-                    let input = app.input.trim();
-                    if input.starts_with('/') {
+                if let Some(suggestion) = app.suggestions.get(app.suggestion_index).cloned() {
+                    let input_trimmed = app.input.trim();
+
+                    if input_trimmed.starts_with('/') {
                         if suggestion.starts_with('/') {
-                            app.input = suggestion.clone() + " ";
+                            app.input = suggestion + " ";
                             app.cursor_pos = app.input.len();
                         } else {
-                            let space_pos = app.input.find(' ').unwrap_or(app.input.len());
-                            let before_space = &app.input[..space_pos];
-                            app.input = format!("{} {}", before_space, suggestion);
-                            app.cursor_pos = app.input.len();
+                            if let Some(space_pos) = app.input.find(' ') {
+                                let before_space = &app.input[..=space_pos];
+                                app.input = before_space.to_string() + &suggestion;
+                                app.cursor_pos = app.input.len();
+                            } else {
+                                app.input = suggestion + " ";
+                                app.cursor_pos = app.input.len();
+                            }
                         }
-                    } else if let Some((start, _)) = app.get_word_at_cursor() {
-                        app.input.replace_range(start..app.cursor_pos, suggestion);
-                        app.cursor_pos = start + suggestion.len();
+                    } else if input_trimmed.starts_with('@') || app.input.contains('@') {
+                        if let Some((start, partial)) = app.get_word_at_cursor() {
+                            let rest_of_input = if app.cursor_pos < app.input.len() {
+                                &app.input[app.cursor_pos..]
+                            } else {
+                                ""
+                            };
+
+                            if suggestion.starts_with('@') {
+                                app.input = format!("{}{}{}", &app.input[..start], suggestion, rest_of_input);
+                                app.cursor_pos = start + suggestion.len();
+                            } else {
+                                app.input = format!("{}{}{}", &app.input[..start], suggestion, rest_of_input);
+                                app.cursor_pos = start + suggestion.len();
+                            }
+                        }
                     }
                 }
                 app.show_suggestions = false;

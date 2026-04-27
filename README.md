@@ -13,22 +13,26 @@ A local-first semantic code search and chat CLI using RAG (Retrieval-Augmented G
 │  │   Chat Panel         │  │   Context Panel              │ │
 │  │   (Messages/Draft)   │  │   (Retrieved Code Chunks)    │ │
 │  └──────────────────────┘  └──────────────────────────────┘ │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │  Input Bar (Commands / Messages)                      │  │
-│  └───────────────────────────────────────────────────────┘  │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Logs Panel (User prompts, timing, errors)          │    │
+│  └─────────────────────────────────────────────────────┘    │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │  Input Bar (Commands / Messages)                    │    │
+│  └─────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────┘
-                           │
-                           ▼
+                            │
+                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    App State (Arc<Mutex<App>>)              │
 │  ├─ messages: Vec<Message>                                  │
 │  ├─ input: String                                           │
 │  ├─ file_references: Vec<FileReference>                     │
 │  ├─ indexing_progress: Option<IndexingProgress>             │
-│  └─ streaming_message: Option<String>                       │
+│  ├─ streaming_message: Option<String>                       │
+│  └─ follow_bottom: bool (auto-scroll)                       │
 └─────────────────────────────────────────────────────────────┘
-                           │
-                           ▼
+                            │
+                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   ChatService (Arc<Mutex<>>)                │
 │  ├─ client: OllamaClient                                    │
@@ -39,8 +43,8 @@ A local-first semantic code search and chat CLI using RAG (Retrieval-Augmented G
 │          ├─ content: String                                 │
 │          └─ embedding: Vec<f32>                             │
 └─────────────────────────────────────────────────────────────┘
-                           │
-                           ▼
+                            │
+                            ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                   Ollama API (HTTP)                         │
 │  ├─ /api/embeddings  - Get embeddings                       │
@@ -87,31 +91,79 @@ User Input                                  LLM Response
 ## Features
 
 ### Core Functionality
-- **SEMANTIC SEARCH** - Vector similarity search over code chunks
-- **RAG CHAT** - Context-aware conversations with local LLM
-- **FILE REFERENCES** - Include files/directories with @path syntax
-- **STREAMING RESPONSES** - Real-time response streaming
-- **INDEX PERSISTENCE** - Save/load index to avoid re-processing
+- **SEMANTIC SEARCH** - Cosine similarity-based code retrieval using embeddings
+- **RAG CHAT** - Context-aware chat with local LLM via Ollama
+- **FILE REFERENCES** - Include files/directories in prompts with `@path` syntax
+- **STREAMING RESPONSES** - Real-time response streaming from LLM
+- **INDEXING** - Automatic chunking and embedding of code files
+- **PERSISTENCE** - Save/load semantic index to JSON file
+- **CONVERSATION HISTORY** - Multi-turn conversation context retention
+- **FOLLOW-UP QUESTIONS** - Automatic follow-up detection and context reuse
 
 ### User Interface
 - **TUI INTERFACE** - Beautiful terminal UI with ratatui
-- **SPLIT VIEW** - Chat and context panels side-by-side
-- **COMMAND INPUT** - Slash commands for actions
-- **AUTO-COMPLETION** - Tab completion for @files and commands
-- **PROGRESS DISPLAY** - Real-time indexing progress bar
+- **SPLIT VIEW** - Chat panel and context panel side-by-side
+- **LOGS PANEL** - Real-time logging with timing metrics
+- **COMMAND INPUT** - Slash commands for configuration and actions
+- **AUTO-COMPLETION** - Tab completion for commands and @file paths
+- **MODEL SELECTION** - Switch between available Ollama models
+- **STATUS BAR** - Real-time status and progress indicators
+- **MOUSE SUPPORT** - Scroll through chat history with mouse wheel
+- **AUTO-SCROLL** - Auto-follows new messages, scroll up to view history
+- **MARKDOWN RENDERING** - Rich formatting for responses:
+  - Headers (`#`, `##`, `###`)
+  - Bold (`**text**`)
+  - Italic (`*text*`)
+  - Code (`` `code` ``)
+  - Lists (`- item`, `1. item`)
+  - File references (`@file`)
 
 ### File Processing
-- **DIRECTORY SCANNING** - Recursive file discovery
-- **IGNORE PATTERNS** - Skips target/, node_modules/, .git/, etc.
-- **FILE FILTERING** - Support for .rs, .toml, .json, .yaml, .md
+- **DIRECTORY SCANNING** - Recursive file discovery with ignore patterns
+- **FILE FILTERING** - Support for .rs, .toml, .json, .yaml, .md, .py, .js, .go, and more
+- **IGNORE DIRECTORIES** - Skips models/, node_modules/, target/, dist/, .git/
 - **TEXT CHUNKING** - Configurable chunk size and overlap
+- **FILE WATCHING** - Auto-reindex on file changes (planned)
+- **INCREMENTAL INDEXING** - Update index for changed files only
+
+### Indexing & Search
+- **COSINE SIMILARITY** - Vector similarity scoring for retrieval
+- **TOP-K RETRIEVAL** - Configurable number of context chunks
+- **STREAMING INDEX** - Progressive indexing with progress display
+- **INDEX SAVE/LOAD** - Persist index to avoid re-indexing
+- **THRESHOLD FILTERING** - Relevance-based chunk filtering
+- **METADATA STORE** - Track file modification times for incremental updates
 
 ### Model Integration
 - **OLLAMA CLIENT** - HTTP client for local LLM inference
-- **MODEL SWITCHING** - Change chat/embed models at runtime
+- **EMBEDDING API** - Generate embeddings via Ollama API
+- **CHAT API** - Query LLM with context-augmented prompts
 - **MODEL LISTING** - Discover available Ollama models
+- **MODEL SWITCHING** - Runtime model selection for chat and embed
+- **API KEY MANAGEMENT** - Secure storage for remote API keys (planned)
 
-See [FEATURES.md](FEATURES.md) for the full roadmap with planned features.
+### Configuration
+- **CLI ARGUMENTS** - Command-line arguments for path and index file
+- **DEFAULT MODELS** - Configurable chat and embed model defaults
+- **BASE URL** - Configurable Ollama server endpoint
+- **CONFIG FILES** - TOML/YAML configuration files
+- **ENV VARIABLES** - Environment-based configuration
+- **PROFILES** - Multiple configuration profiles
+
+### Performance & UX
+- **ASYNC RUNTIME** - Tokio-based async operations
+- **PROGRESS INDICATORS** - Real-time indexing progress
+- **LOADING STATES** - Visual feedback during operations
+- **CLIPBOARD SUPPORT** - Copy selected text to clipboard
+- **CACHING** - Cache embeddings for repeated queries
+- **BACKGROUND INDEXING** - Non-blocking index operations
+- **RATE LIMITING** - Throttle API requests
+
+### Developer Tools
+- **DEBUG MODE** - Verbose logging and diagnostics
+- **EXPORT CONTEXT** - Save retrieved context to file
+- **IMPORT QUESTIONS** - Load questions from file
+- **BENCHMARK MODE** - Performance metrics collection
 
 ## Quick Start
 
@@ -165,9 +217,15 @@ cargo run -- index /path/to/project
 | `/switch <model>` | Change chat model | `/switch llama3` |
 | `/switch-embed <model>` | Change embed model | `/switch-embed nomic-embed-text` |
 | `/index [path]` | Index a directory | `/index ./src` |
+| `/incremental-index [path]` | Index only changed files | `/incremental-index ./src` |
 | `/reindex` | Re-index current project | `/reindex` |
 | `/save` | Save current index | `/save` |
 | `/clear` | Clear chat history | `/clear` |
+| `/clear-history` | Clear conversation context | `/clear-history` |
+| `/profiles` | List available profiles | `/profiles` |
+| `/profile <name>` | Switch configuration profile | `/profile work` |
+| `/syntax` | Toggle syntax highlighting | `/syntax` |
+| `/benchmark` | Show timing metrics | `/benchmark` |
 | `/help` | Show help text | `/help` or `/h` or `?` |
 | `/quit` | Exit application | `/quit` or `/q` |
 
@@ -193,14 +251,19 @@ Include multiple files:
 | `Enter` | Send message or execute command |
 | `Tab` | Accept auto-completion or next suggestion |
 | `Shift+Tab` | Previous suggestion |
-| `Esc` | Cancel suggestions |
+| `Esc` | Cancel suggestions or streaming |
 | `←/→` | Move cursor |
 | `Backspace` | Delete character before cursor |
 | `Delete` | Delete character at cursor |
 | `Home` | Move cursor to start |
-| `PageUp` | Scroll chat up |
-| `PageDown` | Scroll chat down |
-| `Ctrl+C` | Quit |
+| `PageUp` / `k` | Scroll chat up |
+| `PageDown` / `j` | Scroll chat down |
+| `Ctrl+C` / `Ctrl+D` / `Ctrl+Q` | Quit |
+
+### Mouse Support
+
+- **Scroll wheel** - Scroll through chat history
+- **Click and drag** - Select text for copy to clipboard
 
 ## Modules
 
@@ -216,9 +279,17 @@ Include multiple files:
 | `clients/ollama.rs` | Ollama HTTP client (embeddings, chat, models) |
 | `client.rs` | HTTP request/response types |
 | `db/store.rs` | Semantic index (chunks, save/load) |
+| `db/metadata.rs` | File metadata for incremental indexing |
 | `scrapper.rs` | Directory scanning and text chunking |
 | `input/handler.rs` | Keyboard input handling |
 | `ui/render.rs` | TUI rendering with ratatui |
+| `ui/syntax.rs` | Code syntax highlighting |
+| `config/settings.rs` | Configuration management |
+| `config/mod.rs` | Config loading and profiles |
+| `dev/debug.rs` | Debug logging utilities |
+| `dev/benchmark.rs` | Performance metrics |
+| `secrets/store.rs` | Secure API key storage |
+| `watcher/handler.rs` | File watching (planned) |
 
 ## Data Model
 
@@ -253,6 +324,7 @@ struct App {
     current_embed_model: String,
     available_models: Vec<String>,
     suggestions: Vec<String>,
+    follow_bottom: bool,  // Auto-scroll state
     // ...
 }
 ```
@@ -262,7 +334,7 @@ struct App {
 1. **Directory Scan**
    - Recursively find files in target directory
    - Skip ignored directories (models/, node_modules/, target/, dist/, .git/)
-   - Filter by extension (.rs, .toml, .json, .yaml, .md)
+   - Filter by extension
 
 2. **Text Chunking**
    - Split files into overlapping line-based chunks
@@ -320,37 +392,7 @@ Question: [user question]
 
 ### Basic Chat
 
-```
-> How does the event loop work?
-[Assistant responds with context from indexed code]
-```
-
-### With File Reference
-
-```
-> @src/main.rs Explain the EventLoop struct
-[Assistant sees full content of src/main.rs]
-```
-
-### Switch Models
-
-```
-> /models
-Available models:
-  - llama3
-  - nomic-embed-text
-  - codellama
-
-> /switch codellama
-Switched to codellama
-```
-
-### Index Progress
-
-```
-Status: Indexing ./src
-[45/120] files, 823 chunks - src/db/store.rs
-```
+![Dashboard](./examples/screen_1.png)
 
 ## Project Structure
 
@@ -358,7 +400,7 @@ Status: Indexing ./src
 src/
 ├── main.rs                 # Entry point, event loop
 ├── cli.rs                  # CLI argument parsing
-├── client.rs               # HTTP request types
+├── client.rs                # HTTP request types
 ├── scrapper.rs             # File scanning, chunking
 ├── app/
 │   ├── mod.rs              # App module exports
@@ -370,16 +412,31 @@ src/
 │   └── ollama.rs           # Ollama HTTP client
 ├── db/
 │   ├── mod.rs              # DB module exports
-│   └── store.rs            # SemanticIndex storage
+│   ├── store.rs            # SemanticIndex storage
+│   └── metadata.rs         # File metadata tracking
 ├── service/
 │   ├── mod.rs              # Service config
 │   └── chat.rs             # RAG service logic
+├── config/
+│   ├── mod.rs              # Config module exports
+│   └── settings.rs         # Configuration structs
 ├── input/
 │   ├── mod.rs              # Input module exports
 │   └── handler.rs          # Keyboard input handler
-└── ui/
-    ├── mod.rs              # UI module exports
-    └── render.rs           # TUI rendering
+├── ui/
+│   ├── mod.rs              # UI module exports
+│   ├── render.rs           # TUI rendering
+│   └── syntax.rs           # Syntax highlighting
+├── dev/
+│   ├── mod.rs              # Dev module exports
+│   ├── debug.rs            # Debug logging
+│   └── benchmark.rs        # Performance metrics
+├── secrets/
+│   ├── mod.rs              # Secrets module exports
+│   └── store.rs            # API key storage
+└── watcher/
+    ├── mod.rs              # Watcher module exports
+    └── handler.rs          # File watching (planned)
 ```
 
 ## Dependencies
@@ -419,6 +476,11 @@ src/
 ## Roadmap
 
 See [FEATURES.md](FEATURES.md) for planned and completed features.
+
+- [ ] CODE PARSING - AST-aware chunk boundaries
+- [ ] HNSW INDEX - Approximate nearest neighbor for faster search
+- [ ] MULTI-PROVIDER - Support for multiple LLM providers
+- [ ] FILE WATCHING - Auto-reindex on file changes
 
 ## License
 

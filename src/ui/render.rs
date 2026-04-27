@@ -10,7 +10,9 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(frame: &mut Frame, app: &App) {
+use ratatui::widgets::Padding;
+
+pub fn render(frame: &mut Frame, app: &mut App) {
     let suggestions_height = if app.show_suggestions {
         (app.suggestions.len().min(7) + 2) as u16
     } else {
@@ -43,10 +45,19 @@ pub fn render(frame: &mut Frame, app: &App) {
         (chunks[1], chunks[2])
     };
 
-    let main_chunks = Layout::default().direction(Direction::Horizontal).constraints([Constraint::Percentage(50), Constraint::Percentage(50)]).split(main_area);
+    let main_chunks = Layout::default().direction(Direction::Horizontal).constraints([
+        Constraint::Percentage(70),
+        Constraint::Percentage(30),
+    ]).split(main_area);
+
+    let right_chunks = Layout::default().direction(Direction::Vertical).constraints([
+        Constraint::Percentage(55),
+        Constraint::Percentage(45),
+    ]).split(main_chunks[1]);
 
     render_chat(frame, app, main_chunks[0]);
-    render_context(frame, app, main_chunks[1]);
+    render_context(frame, app, right_chunks[0]);
+    render_logs(frame, right_chunks[1]);
     render_input(frame, app, input_area);
     render_status(frame, app, status_area);
 }
@@ -99,26 +110,40 @@ fn render_suggestions(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 }
 
-fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::default().title(" Chat ").borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan));
+fn render_chat(frame: &mut Frame, app: &mut App, area: Rect) {
+    let border_color = if app.streaming_message.is_some() {
+        Color::Magenta
+    } else if app.is_loading {
+        Color::Yellow
+    } else {
+        Color::Blue
+    };
 
-    let mut lines: Vec<Line> = Vec::new();
+    let block = Block::default()
+        .title(" Chat ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color))
+        .padding(Padding::new(1, 1, 0, 0));
+
+    let inner_area = block.inner(area);
+    let visible_lines = inner_area.height as usize;
+    let content_width = inner_area.width.saturating_sub(2) as usize;
+
+    let mut all_lines: Vec<String> = Vec::new();
 
     for msg in &app.messages {
-        let (prefix, color) = match msg.source {
-            MessageSource::User => (" You: ", Color::Green),
-            MessageSource::Assistant => (" AI: ", Color::Blue),
-            MessageSource::System => (" System: ", Color::Yellow),
+        let prefix = match msg.source {
+            MessageSource::User => "You:",
+            MessageSource::Assistant => "AI:",
+            MessageSource::System => "System:",
         };
-
-        lines.push(Line::from(vec![
-            Span::styled(prefix, Style::default().fg(color).add_modifier(Modifier::BOLD)),
-        ]));
+        all_lines.push(prefix.to_string());
 
         for line in msg.content.lines() {
-            lines.push(Line::from(highlight_message_line(line)));
+            let wrapped = wrap_line(line, content_width);
+            all_lines.extend(wrapped);
         }
-        lines.push(Line::from(""));
+        all_lines.push(String::new());
     }
 
     if let Some(ref streaming) = app.streaming_message {
@@ -130,20 +155,12 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
                 3 => "...",
                 _ => "...",
             };
-            lines.push(Line::from(Span::styled(
-                format!(" Thinking{}", dots),
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
-            )));
+            all_lines.push(format!("Thinking{}", dots));
         } else {
-            lines.push(Line::from(vec![
-                Span::styled(" AI: ", Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
-            ]));
-
+            all_lines.push("AI:".to_string());
             for line in streaming.lines() {
-                lines.push(Line::from(Span::styled(
-                    line,
-                    Style::default().add_modifier(Modifier::BOLD | Modifier::ITALIC),
-                )));
+                let wrapped = wrap_line(line, content_width);
+                all_lines.extend(wrapped);
             }
         }
     } else if app.is_loading {
@@ -154,30 +171,107 @@ fn render_chat(frame: &mut Frame, app: &App, area: Rect) {
             3 => "...",
             _ => "...",
         };
-        lines.push(Line::from(Span::styled(
-            format!(" Thinking{}", dots),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC),
-        )));
+        all_lines.push(format!("Thinking{}", dots));
     }
 
-    let total_lines = lines.len();
-    let visible_lines = area.height.saturating_sub(2) as usize;
+    let total_lines = all_lines.len();
+    app.max_scroll = total_lines.saturating_sub(visible_lines);
 
-    let scroll_offset = app.chat_scroll as usize;
-    let max_scroll = total_lines.saturating_sub(visible_lines);
-    let scroll_offset = scroll_offset.min(max_scroll);
+    // If following bottom (auto-scroll), always show the latest content
+    // Otherwise, respect user's scroll position
+    let scroll_offset = if app.follow_bottom {
+        app.max_scroll
+    } else {
+        app.chat_scroll.min(app.max_scroll)
+    };
 
-    let lines: Vec<Line> = lines.into_iter().skip(scroll_offset).take(visible_lines).collect();
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let display_lines: Vec<Line> = all_lines.iter().skip(scroll_offset).take(visible_lines).map(|line| {
+        let is_prefix = line == "You:" || line == "AI:" || line == "System:";
+        if is_prefix {
+            let color = if line == "You:" { Color::Green } else if line == "AI:" { Color::Blue } else { Color::Yellow };
+            Line::from(Span::styled(format!(" {} ", line), Style::default().fg(color).add_modifier(Modifier::BOLD)))
+        } else if line.starts_with("Thinking") {
+            Line::from(Span::styled(line.clone(), Style::default().fg(Color::Yellow).add_modifier(Modifier::ITALIC)))
+        } else {
+            highlight_message_line(line)
+        }
+    }).collect();
 
+    let paragraph = Paragraph::new(display_lines).block(block);
     frame.render_widget(paragraph, area);
 }
 
+fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![line.to_string()];
+    }
+
+    let mut result = Vec::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut start = 0;
+
+    while start < chars.len() {
+        let end = (start + max_width).min(chars.len());
+        let chunk: String = chars[start..end].iter().collect();
+        result.push(chunk);
+        start = end;
+    }
+
+    if result.is_empty() {
+        result.push(String::new());
+    }
+
+    result
+}
+
 fn highlight_message_line(line: &str) -> Line {
+    let trimmed = line.trim_start();
+
+    // Check for headers first
+    if trimmed.starts_with("### ") {
+        let content = &trimmed[4..];
+        return Line::from(Span::styled(
+            content.to_string(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
+    } else if trimmed.starts_with("## ") {
+        let content = &trimmed[3..];
+        return Line::from(Span::styled(
+            content.to_string(),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ));
+    } else if trimmed.starts_with("# ") {
+        let content = &trimmed[2..];
+        return Line::from(Span::styled(
+            content.to_string(),
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ));
+    } else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        let content = &trimmed[2..];
+        let content_spans = parse_inline_formatting(content);
+        let mut spans = vec![Span::styled("• ", Style::default().fg(Color::Cyan))];
+        spans.extend(content_spans);
+        return Line::from(spans);
+    } else if trimmed.chars().next().map(|c| c.is_numeric()).unwrap_or(false) {
+        // Check for numbered list
+        if let Some(dot_pos) = trimmed.find(". ") {
+            let num_part = &trimmed[..dot_pos + 2];
+            let content = &trimmed[dot_pos + 2..];
+            let content_spans = parse_inline_formatting(content);
+            let mut spans = vec![Span::styled(num_part.to_string(), Style::default().fg(Color::Cyan))];
+            spans.extend(content_spans);
+            return Line::from(spans);
+        }
+    }
+
+    // Default: parse inline formatting
+    Line::from(parse_inline_formatting(line))
+}
+
+fn parse_inline_formatting(line: &str) -> Vec<Span> {
     let mut spans: Vec<Span> = Vec::new();
     let mut current = String::new();
     let mut in_backtick = false;
-    let mut in_file_ref = false;
 
     let chars: Vec<char> = line.chars().collect();
     let mut i = 0;
@@ -186,46 +280,70 @@ fn highlight_message_line(line: &str) -> Line {
         let c = chars[i];
 
         if c == '`' {
-            if !current.is_empty() {
-                if in_file_ref {
-                    spans.push(Span::styled(
-                        current.clone(),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED),
-                    ));
-                } else if in_backtick {
-                    spans.push(Span::styled(
-                        current.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ));
-                } else {
+            if in_backtick {
+                spans.push(Span::styled(
+                    current.clone(),
+                    Style::default().fg(Color::Cyan),
+                ));
+                current.clear();
+                in_backtick = false;
+            } else {
+                if !current.is_empty() {
                     spans.push(Span::raw(current.clone()));
+                    current.clear();
                 }
+                in_backtick = true;
+            }
+            i += 1;
+        } else if c == '*' && !in_backtick {
+            if !current.is_empty() {
+                spans.push(Span::raw(current.clone()));
                 current.clear();
             }
 
-            in_backtick = !in_backtick;
-            i += 1;
+            if i + 1 < chars.len() && chars[i + 1] == '*' {
+                let end = find_closing_marker(&chars, i + 2, "**");
+                if let Some(end_pos) = end {
+                    let bold_text: String = chars[i + 2..end_pos].iter().collect();
+                    spans.push(Span::styled(
+                        bold_text,
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ));
+                    i = end_pos + 2;
+                } else {
+                    spans.push(Span::raw("**"));
+                    i += 2;
+                }
+            } else {
+                let end = find_closing_marker(&chars, i + 1, "*");
+                if let Some(end_pos) = end {
+                    let italic_text: String = chars[i + 1..end_pos].iter().collect();
+                    spans.push(Span::styled(
+                        italic_text,
+                        Style::default().add_modifier(Modifier::ITALIC),
+                    ));
+                    i = end_pos + 1;
+                } else {
+                    spans.push(Span::raw("*"));
+                    i += 1;
+                }
+            }
         } else if c == '@' && !in_backtick {
             if !current.is_empty() {
                 spans.push(Span::raw(current.clone()));
                 current.clear();
             }
             current.push(c);
-            in_file_ref = true;
             i += 1;
-        } else if (c.is_whitespace() || c == '\n') && in_file_ref {
-            if !current.is_empty() {
-                spans.push(Span::styled(
-                    current.clone(),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED),
-                ));
-                current.clear();
+            while i < chars.len() && !chars[i].is_whitespace() {
+                current.push(chars[i]);
+                i += 1;
             }
-            in_file_ref = false;
-            current.push(c);
-            spans.push(Span::raw(current.clone()));
+            spans.push(Span::styled(
+                current.clone(),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED),
+            ));
             current.clear();
-            i += 1;
         } else {
             current.push(c);
             i += 1;
@@ -233,22 +351,42 @@ fn highlight_message_line(line: &str) -> Line {
     }
 
     if !current.is_empty() {
-        if in_file_ref {
+        if in_backtick {
             spans.push(Span::styled(
                 current,
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::UNDERLINED),
-            ));
-        } else if in_backtick {
-            spans.push(Span::styled(
-                current,
-                Style::default().add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::Cyan),
             ));
         } else {
             spans.push(Span::raw(current));
         }
     }
 
-    Line::from(spans)
+    if spans.is_empty() {
+        vec![Span::raw(line)]
+    } else {
+        spans
+    }
+}
+
+fn find_closing_marker(chars: &[char], start: usize, marker: &str) -> Option<usize> {
+    let marker_chars: Vec<char> = marker.chars().collect();
+    let marker_len = marker_chars.len();
+
+    let mut i = start;
+    while i + marker_len <= chars.len() {
+        let mut matches = true;
+        for (j, mc) in marker_chars.iter().enumerate() {
+            if chars[i + j] != *mc {
+                matches = false;
+                break;
+            }
+        }
+        if matches {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
 }
 
 fn render_context(frame: &mut Frame, app: &App, area: Rect) {
@@ -268,8 +406,10 @@ fn render_context(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         )));
         for (idx, r) in app.file_references.iter().enumerate() {
+            let path_str = r.path.display().to_string();
+            let truncated_path: String = path_str.chars().take(area.width.saturating_sub(8) as usize).collect();
             lines.push(Line::from(Span::styled(
-                format!("  [{}] {}", idx + 1, r.path.display()),
+                format!("  [{}] {}", idx + 1, truncated_path),
                 Style::default().fg(Color::Yellow),
             )));
         }
@@ -282,9 +422,10 @@ fn render_context(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
         )));
 
-        for line in chunk.content.lines().take(5) {
+        for line in chunk.content.lines().take(3) {
+            let truncated: String = line.chars().take(area.width.saturating_sub(6) as usize).collect();
             lines.push(Line::from(Span::styled(
-                format!("  {}", line),
+                format!("  {}", truncated),
                 Style::default().fg(Color::Gray),
             )));
         }
@@ -300,6 +441,111 @@ fn render_context(frame: &mut Frame, app: &App, area: Rect) {
 
     let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
 
+    frame.render_widget(paragraph, area);
+}
+
+fn render_logs(frame: &mut Frame, area: Rect) {
+    let block = Block::default()
+        .title(" Logs ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    let logs = crate::dev::get_logs();
+    let visible_lines = area.height.saturating_sub(2) as usize;
+    let start = logs.len().saturating_sub(visible_lines);
+    let max_width = area.width.saturating_sub(4) as usize;
+
+    for log in logs.iter().skip(start) {
+        let (level, body) = if log.contains(" ERROR ") {
+            let parts: Vec<&str> = log.splitn(2, " ERROR ").collect();
+            if parts.len() == 2 {
+                ("ERROR".to_string(), parts[1].to_string())
+            } else {
+                ("".to_string(), log.clone())
+            }
+        } else if log.contains(" WARN ") {
+            let parts: Vec<&str> = log.splitn(2, " WARN ").collect();
+            if parts.len() == 2 {
+                ("WARN".to_string(), parts[1].to_string())
+            } else {
+                ("".to_string(), log.clone())
+            }
+        } else if log.contains(" INFO ") {
+            let parts: Vec<&str> = log.splitn(2, " INFO ").collect();
+            if parts.len() == 2 {
+                ("INFO".to_string(), parts[1].to_string())
+            } else {
+                ("".to_string(), log.clone())
+            }
+        } else if log.contains(" DEBUG ") {
+            let parts: Vec<&str> = log.splitn(2, " DEBUG ").collect();
+            if parts.len() == 2 {
+                ("DEBUG".to_string(), parts[1].to_string())
+            } else {
+                ("".to_string(), log.clone())
+            }
+        } else {
+            ("".to_string(), log.clone())
+        };
+
+        let (level_color, body_color) = match level.as_str() {
+            "ERROR" => (Color::Red, Color::Gray),
+            "WARN" => (Color::Yellow, Color::Gray),
+            "INFO" => (Color::Cyan, Color::Gray),
+            "DEBUG" => (Color::Magenta, Color::Gray),
+            _ => (Color::DarkGray, Color::Gray),
+        };
+
+        if !level.is_empty() {
+            let prefix_len = 4 + level.len() + 3;
+            let body_max = max_width.saturating_sub(prefix_len);
+
+            let chars: Vec<char> = body.chars().collect();
+            let first_line: String = chars.iter().take(body_max).collect();
+            lines.push(Line::from(vec![
+                Span::styled("- ", Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("[{}] ", level), Style::default().fg(level_color)),
+                Span::styled(first_line, Style::default().fg(body_color)),
+            ]));
+
+            let wrap_max = max_width.saturating_sub(2);
+            let remaining: String = chars.iter().skip(body_max).collect();
+            for chunk in remaining.as_bytes().chunks(wrap_max) {
+                let chunk_str = String::from_utf8_lossy(chunk).to_string();
+                lines.push(Line::from(vec![
+                    Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(chunk_str, Style::default().fg(body_color)),
+                ]));
+            }
+        } else {
+            let wrap_max = max_width.saturating_sub(2);
+            for (i, chunk) in body.as_bytes().chunks(wrap_max).enumerate() {
+                let chunk_str = String::from_utf8_lossy(chunk).to_string();
+                if i == 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled("- ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(chunk_str, Style::default().fg(body_color)),
+                    ]));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(chunk_str, Style::default().fg(body_color)),
+                    ]));
+                }
+            }
+        }
+    }
+
+    if logs.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "- Ready",
+            Style::default().fg(Color::Gray),
+        )));
+    }
+
+    let paragraph = Paragraph::new(lines).block(block);
     frame.render_widget(paragraph, area);
 }
 
